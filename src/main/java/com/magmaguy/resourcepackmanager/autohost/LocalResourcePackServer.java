@@ -40,23 +40,57 @@ public class LocalResourcePackServer {
 
     public void start() throws RuntimeException {
         try {
+            // Make sure any previous instance is stopped
+            if (server != null) {
+                try {
+                    stop();
+                } catch (Exception ex) {
+                    Bukkit.getLogger().warning("Error stopping previous server instance: " + ex.getMessage());
+                }
+            }
+
             // Initialize database
             initializeDatabase();
             
             // Create packs directory if it doesn't exist
             Files.createDirectories(LocalServerConfig.getResourcePacksPath());
 
-            // Create and start the HTTP server with a larger backlog
-            server = HttpServer.create(new InetSocketAddress(LocalServerConfig.getHost(), LocalServerConfig.getPort()), 50);
+            // Try to create server with configured port
+            int port = LocalServerConfig.getPort();
+            int maxAttempts = 5;
+            int attempt = 0;
+            boolean success = false;
+
+            while (!success && attempt < maxAttempts) {
+                try {
+                    server = HttpServer.create(new InetSocketAddress(LocalServerConfig.getHost(), port), 50);
+                    success = true;
+                } catch (IOException e) {
+                    attempt++;
+                    if (attempt < maxAttempts) {
+                        port = findNextAvailablePort(port + 1);
+                        Bukkit.getLogger().warning("Port " + (port - 1) + " is in use, trying port " + port);
+                    } else {
+                        throw new RuntimeException("Could not find available port after " + maxAttempts + " attempts");
+                    }
+                }
+            }
+
+            // Configure and start the server
             server.createContext("/", new ResourcePackHandler());
-            // Create a thread pool with more threads for concurrent downloads
             server.setExecutor(Executors.newFixedThreadPool(20));
-            start();
+            server.start();
             running = true;
+
+            // Update the port in the configuration if it changed
+            if (port != LocalServerConfig.getPort()) {
+                LocalServerConfig.setPort(port);
+                Bukkit.getLogger().info("Updated server port to: " + port);
+            }
 
             Bukkit.getLogger().info("Local resource pack server started on http://" + 
                        LocalServerConfig.getHost() + ":" + 
-                       LocalServerConfig.getPort() + "/");
+                       port + "/");
         } catch (Exception e) {
             running = false;
             server = null;
@@ -65,20 +99,50 @@ public class LocalResourcePackServer {
         }
     }
 
+    private int findNextAvailablePort(int startPort) {
+        int port = startPort;
+        while (port < 65535) { // Maximum valid port number
+            try (java.net.ServerSocket socket = new java.net.ServerSocket(port)) {
+                // If we can bind to the port, it's available
+                socket.close();
+                return port;
+            } catch (IOException e) {
+                // Port is in use, try next one
+                port++;
+            }
+        }
+        throw new RuntimeException("No available ports found");
+    }
+
     public void stop() {
         running = false;
+        
+        // Stop the HTTP server
         if (server != null) {
-            server.stop(0);
-            server = null;
+            try {
+                server.stop(0);
+                // Wait a bit to ensure all connections are closed
+                Thread.sleep(100);
+            } catch (Exception e) {
+                Bukkit.getLogger().warning("Error while stopping HTTP server: " + e.getMessage());
+            } finally {
+                server = null;
+            }
         }
+        
+        // Close database connection
         if (dbConnection != null) {
             try {
                 dbConnection.close();
-                dbConnection = null;
             } catch (Exception e) {
                 Bukkit.getLogger().severe("Error closing database connection: " + e.getMessage());
+            } finally {
+                dbConnection = null;
             }
         }
+        
+        // Force cleanup any remaining resources
+        System.gc();
     }
 
     private void initializeDatabase() {

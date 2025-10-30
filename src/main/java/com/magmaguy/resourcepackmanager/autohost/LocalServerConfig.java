@@ -1,7 +1,9 @@
 package com.magmaguy.resourcepackmanager.autohost;
 
+import com.magmaguy.resourcepackmanager.ResourcePackManager;
 import com.magmaguy.resourcepackmanager.config.DefaultConfig;
 import lombok.Getter;
+import org.bukkit.Bukkit;
 
 import java.io.File;
 import java.nio.file.Path;
@@ -12,6 +14,11 @@ public class LocalServerConfig {
     private static int port;
     @Getter
     private static String host;
+    
+    public static void setPort(int newPort) {
+        port = newPort;
+        Bukkit.getLogger().warning("Server port changed to " + newPort + ". Please update your config.yml with this new port!");
+    }
     
     @Getter
     private static File serverDirectory;
