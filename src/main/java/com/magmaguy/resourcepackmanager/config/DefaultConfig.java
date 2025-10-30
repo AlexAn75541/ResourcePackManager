@@ -18,6 +18,12 @@ public class DefaultConfig extends ConfigurationFile {
     private static String resourcePackPrompt;
     @Getter
     private static String resourcePackRerouting;
+    @Getter
+    private static String serverUrl;
+    @Getter
+    private static int serverPort;
+    @Getter
+    private static boolean useLocalServer;
 
 
     public DefaultConfig() {
@@ -66,5 +72,21 @@ public class DefaultConfig extends ConfigurationFile {
                         "ResourcePackManage/output",
                         "If you don't know what any of what is written here means, just don't touch this setting!"),
                 fileConfiguration, "resourcePackRerouting", "");
+
+        useLocalServer = ConfigurationEngine.setBoolean(
+                List.of("Whether to use the local server for hosting resource packs instead of magmaguy.com",
+                        "If true, the plugin will host resource packs using the built-in server"),
+                fileConfiguration, "useLocalServer", false);
+
+        serverUrl = ConfigurationEngine.setString(
+                List.of("The URL where your resource pack server will be accessible",
+                        "Default is localhost, change this to your server's public IP or domain if you want to make it accessible externally",
+                        "Don't include protocol (http://) or port number"),
+                fileConfiguration, "serverUrl", "localhost");
+
+        serverPort = ConfigurationEngine.setInt(
+                List.of("The port number for the resource pack server",
+                        "Make sure this port is open in your firewall if you want to make it accessible externally"),
+                fileConfiguration, "serverPort", 50000);
     }
 }

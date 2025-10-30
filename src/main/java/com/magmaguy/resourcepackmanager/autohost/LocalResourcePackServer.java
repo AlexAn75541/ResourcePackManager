@@ -39,14 +39,14 @@ public class LocalResourcePackServer {
             Files.createDirectories(LocalServerConfig.getResourcePacksPath());
 
             // Create and start the HTTP server
-            server = HttpServer.create(new InetSocketAddress(LocalServerConfig.getHOST(), LocalServerConfig.getPORT()), 0);
+            server = HttpServer.create(new InetSocketAddress(LocalServerConfig.getHost(), LocalServerConfig.getPort()), 0);
             server.createContext("/", new ResourcePackHandler());
             server.setExecutor(Executors.newFixedThreadPool(10));
             server.start();
 
             Bukkit.getLogger().info("Local resource pack server started on http://" + 
-                       LocalServerConfig.getHOST() + ":" + 
-                       LocalServerConfig.getPORT() + "/");
+                       LocalServerConfig.getHost() + ":" + 
+                       LocalServerConfig.getPort() + "/");
         } catch (IOException e) {
             Bukkit.getLogger().severe("Failed to start local resource pack server: " + e.getMessage());
         }

@@ -1,5 +1,6 @@
 package com.magmaguy.resourcepackmanager.autohost;
 
+import com.magmaguy.resourcepackmanager.config.DefaultConfig;
 import lombok.Getter;
 
 import java.io.File;
@@ -8,9 +9,9 @@ import java.nio.file.Paths;
 
 public class LocalServerConfig {
     @Getter
-    private static final int PORT = 50000;
+    private static int port;
     @Getter
-    private static final String HOST = "localhost";
+    private static String host;
     
     @Getter
     private static File serverDirectory;
@@ -18,6 +19,10 @@ public class LocalServerConfig {
     private static File databaseFile;
     
     public static void initialize(org.bukkit.plugin.java.JavaPlugin plugin) {
+        // Load configuration
+        host = DefaultConfig.getServerUrl();
+        port = DefaultConfig.getServerPort();
+
         // Create server directory under plugin's data folder
         serverDirectory = new File(plugin.getDataFolder(), "localserver");
         if (!serverDirectory.exists()) {

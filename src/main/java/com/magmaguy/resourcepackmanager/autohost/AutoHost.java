@@ -31,7 +31,7 @@ import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 
 public class AutoHost {
-    private static final String finalURL = "http://localhost:50000/";
+    private static String finalURL;
     @Setter
     private static boolean done = false;
     private static LocalResourcePackServer localServer;
@@ -54,18 +54,27 @@ public class AutoHost {
     public static void initialize() {
         if (!DefaultConfig.isAutoHost()) return;
         if (Mix.getFinalResourcePack() == null) return;
-        Logger.info("Starting autohost!");
+        
+        // Set up the URL based on configuration
+        if (DefaultConfig.isUseLocalServer()) {
+            finalURL = "http://" + DefaultConfig.getServerUrl() + ":" + DefaultConfig.getServerPort() + "/";
+            Logger.info("Starting local resource pack server...");
+            
+            // Initialize the local server configuration
+            LocalServerConfig.initialize(ResourcePackManager.plugin);
+            
+            // Start the local server
+            localServer = new LocalResourcePackServer();
+            localServer.start();
+        } else {
+            finalURL = "https://magmaguy.com/rsp/";
+            Logger.info("Using remote resource pack hosting...");
+        }
+
         firstUpload = true;
         done = false;
         rspUUID = null;
         if (keepAlive != null) keepAlive.cancel();
-        
-        // Initialize the local server configuration
-        LocalServerConfig.initialize(ResourcePackManager.plugin);
-        
-        // Start the local server
-        localServer = new LocalResourcePackServer();
-        localServer.start();
 
         keepAlive = new BukkitRunnable() {
             int counter = 0;
