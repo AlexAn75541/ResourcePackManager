@@ -1,9 +1,14 @@
 package com.magmaguy.resourcepackmanager.autohost;
 
+import com.google.gson.JsonObject;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 import lombok.Getter;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
+import java.util.Map;
 import org.bukkit.Bukkit;
 
 import java.io.File;
@@ -138,6 +143,8 @@ public class LocalResourcePackServer {
                     handleInitialize(exchange);
                 } else if (path.startsWith("/initialize")) {
                     handleInitialize(exchange);
+                } else if (path.equals("/sha1")) {
+                    handleSHA1Check(exchange);
                 } else {
                     String packId = path.substring(1); // Remove leading slash
                     handleResourcePack(exchange, packId);
@@ -148,6 +155,47 @@ public class LocalResourcePackServer {
                 sendError(exchange, 500, "Internal server error: " + e.getMessage());
             } finally {
                 exchange.close();
+            }
+        }
+
+        private void handleSHA1Check(HttpExchange exchange) throws IOException {
+            if (!exchange.getRequestMethod().equals("POST")) {
+                sendError(exchange, 405, "Method not allowed");
+                return;
+            }
+
+            // Parse the POST data
+            String requestBody = new String(exchange.getRequestBody().readAllBytes());
+            Map<String, String> params = parseFormData(requestBody);
+            String uuid = params.get("uuid");
+            String sha1 = params.get("sha1");
+
+            if (uuid == null || sha1 == null) {
+                sendError(exchange, 400, "Missing uuid or sha1 parameter");
+                return;
+            }
+
+            try {
+                // Check if we have this pack with this SHA1
+                try (PreparedStatement stmt = dbConnection.prepareStatement(
+                        "SELECT file_path FROM resource_packs WHERE id = ?")) {
+                    stmt.setString(1, uuid);
+                    ResultSet rs = stmt.executeQuery();
+                    
+                    JsonObject response = new JsonObject();
+                    if (rs.next()) {
+                        response.addProperty("success", true);
+                        response.addProperty("uploadNeeded", false);
+                        sendJsonResponse(exchange, 200, response.toString());
+                    } else {
+                        response.addProperty("success", true);
+                        response.addProperty("uploadNeeded", true);
+                        sendJsonResponse(exchange, 200, response.toString());
+                    }
+                }
+            } catch (Exception e) {
+                Bukkit.getLogger().severe("Error checking SHA1: " + e.getMessage());
+                sendError(exchange, 500, "Internal server error");
             }
         }
 
@@ -204,11 +252,32 @@ public class LocalResourcePackServer {
             }
         }
 
-        private void sendError(HttpExchange exchange, int code, String message) throws IOException {
-            exchange.sendResponseHeaders(code, message.length());
-            try (OutputStream os = exchange.getResponseBody()) {
-                os.write(message.getBytes());
+        private Map<String, String> parseFormData(String data) {
+            Map<String, String> result = new HashMap<>();
+            for (String pair : data.split("&")) {
+                String[] keyValue = pair.split("=");
+                if (keyValue.length == 2) {
+                    String key = URLDecoder.decode(keyValue[0], StandardCharsets.UTF_8);
+                    String value = URLDecoder.decode(keyValue[1], StandardCharsets.UTF_8);
+                    result.put(key, value);
+                }
             }
+            return result;
+        }
+
+        private void sendJsonResponse(HttpExchange exchange, int code, String jsonString) throws IOException {
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            byte[] response = jsonString.getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(code, response.length);
+            try (OutputStream os = exchange.getResponseBody()) {
+                os.write(response);
+            }
+        }
+
+        private void sendError(HttpExchange exchange, int code, String message) throws IOException {
+            JsonObject error = new JsonObject();
+            error.addProperty("error", message);
+            sendJsonResponse(exchange, code, error.toString());
         }
     }
 }
