@@ -27,6 +27,11 @@
             <name>MagmaGuy's Repository</name>
             <url>https://repo.magmaguy.com/releases</url>
         </repository>
+        <repository>
+            <id>magmaguy-repo-snapshots</id>
+            <name>MagmaGuy's Snapshot Repository</name>
+            <url>https://repo.magmaguy.com/snapshots</url>
+        </repository>
     </repositories>
 
     <dependencies>
@@ -116,10 +121,11 @@
     <distributionManagement>
         <snapshotRepository>
             <id>magmaguy-repo-snapshots</id>
-            <url>https://magmaguy.com/snapshots</url>
+            <name>MagmaGuy's Snapshot Repository</name>
+            <url>https://repo.magmaguy.com/snapshots</url>
         </snapshotRepository>
         <repository>
-            <id>magmaguy-repo-snapshots</id>
+            <id>magmaguy-repo-releases</id>
             <name>MagmaGuy's Repository</name>
             <url>https://repo.magmaguy.com/releases</url>
         </repository>
