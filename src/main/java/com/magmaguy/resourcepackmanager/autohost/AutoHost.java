@@ -277,65 +277,72 @@ public class AutoHost {
         try (CloseableHttpClient httpClient = HttpClients.createDefault()) {
             HttpPost httpPost = new HttpPost(finalURL + "sha1");
 
-            MultipartEntityBuilder builder = MultipartEntityBuilder.create();
-            builder.addTextBody("uuid", rspUUID, ContentType.TEXT_PLAIN.withCharset(StandardCharsets.UTF_8));
-            builder.addTextBody("sha1", Mix.getFinalSHA1(), ContentType.TEXT_PLAIN.withCharset(StandardCharsets.UTF_8));
-            httpPost.setEntity(builder.build());
+            // Create form data with proper encoding
+            StringBuilder formData = new StringBuilder();
+            formData.append("uuid=").append(java.net.URLEncoder.encode(rspUUID, StandardCharsets.UTF_8));
+            formData.append("&sha1=").append(java.net.URLEncoder.encode(Mix.getFinalSHA1(), StandardCharsets.UTF_8));
+            
+            // Set the content type explicitly for form data
+            org.apache.hc.core5.http.io.entity.StringEntity entity = 
+                new org.apache.hc.core5.http.io.entity.StringEntity(
+                    formData.toString(),
+                    ContentType.create("application/x-www-form-urlencoded", StandardCharsets.UTF_8)
+                );
+            httpPost.setEntity(entity);
 
-            try (CloseableHttpResponse response = httpClient.execute(httpPost)) {
-                int statusCode = response.getCode();
-                String responseString = EntityUtils.toString(response.getEntity());
+            // Execute request and process response
+            String responseString = httpClient.execute(httpPost, response -> {
+                try {
+                    String content = EntityUtils.toString(response.getEntity());
+                    int statusCode = response.getCode();
 
-                if (responseString == null) {
-                    return false;
-                }
-
-                if (statusCode >= 200 && statusCode < 300) {
-                    try {
-                        // Parse JSON response
-                        Gson gson = new Gson();
-                        JsonObject jsonResponse = gson.fromJson(responseString, JsonObject.class);
-
-                        // Check if response indicates success
-                        if (jsonResponse.has("success") && jsonResponse.get("success").getAsBoolean()) {
-                            boolean uploadNeeded = jsonResponse.get("uploadNeeded").getAsBoolean();
-
-                            if (!uploadNeeded) {
-                                Logger.info("Remote server already has this resource pack!");
-                                done = true;
-                                if (firstUpload) {
-                                    //Recover from a reload by sending the pack to online players
-                                    for (Player player : Bukkit.getOnlinePlayers())
-                                        AutoHost.sendResourcePack(player);
-                                }
-                                firstUpload = false;
-                            }
-                            return !uploadNeeded; // Return true if no upload needed
-                        } else {
-                            // Server returned error in success status code
-                            Logger.warn("Server returned error in SHA1 response: " + responseString);
-                            return false;
-                        }
-                    } catch (Exception e) {
-                        // Fallback to boolean parsing (backward compatibility)
-                        String trimmedResponse = responseString.trim();
-                        if (trimmedResponse.equals("true") || trimmedResponse.equals("false")) {
-                            boolean result = Boolean.valueOf(trimmedResponse);
-                            Logger.info("Remote server already has this resource pack! Response: " + responseString);
-                            return result;
-                        } else {
-                            Logger.warn("Invalid SHA1 response format from server: " + responseString);
-                            return false;
-                        }
+                    if (statusCode >= 200 && statusCode < 300) {
+                        return content;
+                    } else {
+                        handleErrorResponse(content, statusCode, "SHA1 check");
+                        return null;
                     }
-                } else {
-                    // Handle error response
-                    handleErrorResponse(responseString, statusCode, "SHA1 check");
-                    return false;
+                } catch (IOException e) {
+                    Logger.warn("Error reading SHA1 check response: " + e.getMessage());
+                    return null;
+                }
+            });
+
+            if (responseString != null) {
+                try {
+                    Gson gson = new Gson();
+                    JsonObject jsonResponse = gson.fromJson(responseString, JsonObject.class);
+
+                    if (jsonResponse.has("success") && jsonResponse.get("success").getAsBoolean()) {
+                        boolean uploadNeeded = jsonResponse.get("uploadNeeded").getAsBoolean();
+
+                        if (!uploadNeeded) {
+                            Logger.info("Server already has this resource pack!");
+                            done = true;
+                            if (firstUpload) {
+                                //Recover from a reload by sending the pack to online players
+                                for (Player player : Bukkit.getOnlinePlayers())
+                                    AutoHost.sendResourcePack(player);
+                            }
+                            firstUpload = false;
+                        }
+                        return !uploadNeeded;
+                    }
+                } catch (Exception e) {
+                    // Try legacy boolean response format
+                    String trimmedResponse = responseString.trim();
+                    if (trimmedResponse.equals("true") || trimmedResponse.equals("false")) {
+                        boolean result = Boolean.parseBoolean(trimmedResponse);
+                        Logger.info("Server already has this resource pack! Response: " + responseString);
+                        return result;
+                    }
+                    Logger.warn("Invalid SHA1 response format: " + responseString);
                 }
             }
+            return false;
         } catch (Exception e) {
-            Logger.warn("Failed to communicate with remote server during SHA1 check!");
+            Logger.warn("Failed to send SHA1 check!");
+            Logger.warn("Error details: " + e.getMessage());
             e.printStackTrace();
             return false;
         }
