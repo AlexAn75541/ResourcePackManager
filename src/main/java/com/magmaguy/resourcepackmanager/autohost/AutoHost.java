@@ -194,28 +194,42 @@ public class AutoHost {
     }
 
     public static void uploadFile() {
-        Logger.info("Storing resource pack locally!");
+        if (DefaultConfig.isUseLocalServer()) {
+            Logger.info("Storing resource pack locally!");
 
-        try {
-            // Store the resource pack using the local server
-            rspUUID = LocalResourcePackServer.getInstance().storeResourcePack(Mix.getFinalResourcePack());
-            
-            if (rspUUID != null) {
-                Logger.info("Stored resource pack for local hosting! url: " + finalURL + rspUUID);
-                done = true;
-                if (firstUpload) {
-                    //Recover from a reload by sending the pack to online players
-                    for (Player player : Bukkit.getOnlinePlayers())
-                        AutoHost.sendResourcePack(player);
+            try {
+                // Make sure local server is initialized
+                if (localServer == null || !localServer.isRunning()) {
+                    Logger.info("Local server not running, reinitializing...");
+                    LocalServerConfig.initialize(ResourcePackManager.plugin);
+                    localServer = new LocalResourcePackServer();
+                    localServer.start();
                 }
-                firstUpload = false;
-            } else {
+
+                // Store the resource pack using the local server
+                rspUUID = LocalResourcePackServer.getInstance().storeResourcePack(Mix.getFinalResourcePack());
+                
+                if (rspUUID != null) {
+                    Logger.info("Stored resource pack for local hosting! url: " + finalURL + rspUUID);
+                    done = true;
+                    if (firstUpload) {
+                        //Recover from a reload by sending the pack to online players
+                        for (Player player : Bukkit.getOnlinePlayers())
+                            AutoHost.sendResourcePack(player);
+                    }
+                    firstUpload = false;
+                } else {
+                    Logger.warn("Failed to store resource pack locally! Check if the SQLite database is accessible.");
+                }
+            } catch (Exception e) {
                 Logger.warn("Failed to store resource pack locally!");
+                Logger.warn("Error details: " + e.getMessage());
+                e.printStackTrace();
+                rspUUID = null;
+                done = false;
             }
-        } catch (Exception e) {
-            Logger.warn("Failed to store resource pack!");
-            e.printStackTrace();
-            throw new RuntimeException(e);
+        } else {
+            Logger.warn("Attempted to use local upload when local server is not enabled!");
         }
     }
 

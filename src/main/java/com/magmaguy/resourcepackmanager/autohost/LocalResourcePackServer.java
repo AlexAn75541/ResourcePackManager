@@ -25,12 +25,15 @@ public class LocalResourcePackServer {
     @Getter
     private static LocalResourcePackServer instance;
     private Connection dbConnection;
+    
+    @Getter
+    private boolean running = false;
 
     public LocalResourcePackServer() {
         instance = this;
     }
 
-    public void start() {
+    public void start() throws RuntimeException {
         try {
             // Initialize database
             initializeDatabase();
@@ -43,22 +46,29 @@ public class LocalResourcePackServer {
             server.createContext("/", new ResourcePackHandler());
             server.setExecutor(Executors.newFixedThreadPool(10));
             server.start();
+            running = true;
 
             Bukkit.getLogger().info("Local resource pack server started on http://" + 
                        LocalServerConfig.getHost() + ":" + 
                        LocalServerConfig.getPort() + "/");
-        } catch (IOException e) {
+        } catch (Exception e) {
+            running = false;
+            server = null;
             Bukkit.getLogger().severe("Failed to start local resource pack server: " + e.getMessage());
+            throw new RuntimeException("Failed to start local resource pack server", e);
         }
     }
 
     public void stop() {
+        running = false;
         if (server != null) {
             server.stop(0);
+            server = null;
         }
         if (dbConnection != null) {
             try {
                 dbConnection.close();
+                dbConnection = null;
             } catch (Exception e) {
                 Bukkit.getLogger().severe("Error closing database connection: " + e.getMessage());
             }
