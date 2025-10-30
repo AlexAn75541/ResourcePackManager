@@ -117,11 +117,51 @@ public class LocalResourcePackServer {
     }
 
     private class ResourcePackHandler implements HttpHandler {
+        private String currentUUID = null;
+
+        private String getCurrentOrGenerateUUID() {
+            if (currentUUID == null) {
+                currentUUID = UUID.randomUUID().toString();
+            }
+            return currentUUID;
+        }
+
         @Override
         public void handle(HttpExchange exchange) throws IOException {
             String path = exchange.getRequestURI().getPath();
-            String packId = path.substring(1); // Remove leading slash
+            String method = exchange.getRequestMethod();
+
+            Bukkit.getLogger().info("Received " + method + " request for path: " + path);
             
+            try {
+                if (path.equals("/") || path.isEmpty()) {
+                    handleInitialize(exchange);
+                } else if (path.startsWith("/initialize")) {
+                    handleInitialize(exchange);
+                } else {
+                    String packId = path.substring(1); // Remove leading slash
+                    handleResourcePack(exchange, packId);
+                }
+            } catch (Exception e) {
+                Bukkit.getLogger().severe("Error handling request: " + e.getMessage());
+                e.printStackTrace();
+                sendError(exchange, 500, "Internal server error: " + e.getMessage());
+            } finally {
+                exchange.close();
+            }
+        }
+
+        private void handleInitialize(HttpExchange exchange) throws IOException {
+            // Return success with the current or new UUID
+            String response = "{\"success\":true,\"uuid\":\"" + getCurrentOrGenerateUUID() + "\"}";
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length());
+            try (OutputStream os = exchange.getResponseBody()) {
+                os.write(response.getBytes());
+            }
+        }
+
+        private void handleResourcePack(HttpExchange exchange, String packId) throws IOException {
             try {
                 // Query database for pack
                 try (PreparedStatement stmt = dbConnection.prepareStatement(
@@ -134,6 +174,7 @@ public class LocalResourcePackServer {
                         File packFile = new File(filePath);
                         
                         if (packFile.exists()) {
+                            Bukkit.getLogger().info("Serving resource pack: " + packId);
                             // Serve the file
                             exchange.getResponseHeaders().set("Content-Type", "application/zip");
                             exchange.sendResponseHeaders(200, packFile.length());
@@ -146,18 +187,20 @@ public class LocalResourcePackServer {
                                     os.write(buffer, 0, count);
                                 }
                             }
+                            Bukkit.getLogger().info("Successfully served resource pack: " + packId);
                         } else {
-                            sendError(exchange, 404, "Resource pack not found");
+                            Bukkit.getLogger().warning("Pack file not found at path: " + filePath);
+                            sendError(exchange, 404, "Resource pack file not found");
                         }
                     } else {
+                        Bukkit.getLogger().warning("Invalid resource pack ID requested: " + packId);
                         sendError(exchange, 404, "Invalid resource pack ID");
                     }
                 }
             } catch (Exception e) {
                 Bukkit.getLogger().severe("Error serving resource pack: " + e.getMessage());
+                e.printStackTrace();
                 sendError(exchange, 500, "Internal server error");
-            } finally {
-                exchange.close();
             }
         }
 

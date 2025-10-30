@@ -17,6 +17,7 @@ import org.apache.hc.client5.http.impl.classic.HttpClients;
 import org.apache.hc.core5.http.ContentType;
 import org.apache.hc.core5.http.HttpEntity;
 import org.apache.hc.core5.http.io.entity.EntityUtils;
+import org.apache.hc.core5.http.io.entity.EntityUtils;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.bukkit.scheduler.BukkitRunnable;
@@ -121,62 +122,101 @@ public class AutoHost {
     }
 
     public static void initializeLink() {
-        try (CloseableHttpClient httpClient = HttpClients.createDefault()) {
-            HttpPost httpPost = new HttpPost(finalURL + "initialize");
-            MultipartEntityBuilder builder = MultipartEntityBuilder.create();
-            builder.addTextBody("uuid", DataConfig.getRspUUID(), ContentType.TEXT_PLAIN.withCharset(StandardCharsets.UTF_8));
-            httpPost.setEntity(builder.build());
-
-            try (CloseableHttpResponse response = httpClient.execute(httpPost)) {
-                String responseString = EntityUtils.toString(response.getEntity());
-                int statusCode = response.getCode();
-
-                if (statusCode >= 200 && statusCode < 300) {
-                    // Success - parse JSON response
-                    try {
-                        Gson gson = new Gson();
-                        JsonObject jsonResponse = gson.fromJson(responseString, JsonObject.class);
-
-                        // Check if response indicates success
-                        if (jsonResponse.has("success") && jsonResponse.get("success").getAsBoolean()) {
-                            rspUUID = jsonResponse.get("uuid").getAsString();
-                            DataConfig.setRspUUID(rspUUID);
-                            Logger.info("Server initialized successfully: " + jsonResponse.get("message").getAsString());
-                        } else {
-                            // Server returned error in success status code
-                            Logger.warn("Server returned error in response: " + responseString);
-                            rspUUID = null;
+        if (DefaultConfig.isUseLocalServer()) {
+            try {
+                // For local server, try to initialize by connecting to the initialize endpoint
+                HttpPost httpPost = new HttpPost(finalURL + "initialize");
+                try (CloseableHttpClient httpClient = HttpClients.createDefault()) {
+                    String responseString = httpClient.execute(httpPost, response -> {
+                        int statusCode = response.getCode();
+                        try {
+                            String content = EntityUtils.toString(response.getEntity());
+                            if (statusCode == 200) {
+                                return content;
+                            }
+                            Logger.warn("Local server initialization failed. Status: " + statusCode);
+                            return null;
+                        } catch (IOException e) {
+                            Logger.warn("Error reading response: " + e.getMessage());
+                            return null;
                         }
-                    } catch (Exception e) {
-                        // JSON parsing failed - validate if it looks like a UUID before using it
-                        String trimmedResponse = responseString.trim();
-                        if (isValidUUID(trimmedResponse)) {
-                            rspUUID = trimmedResponse;
-                            DataConfig.setRspUUID(rspUUID);
-                            Logger.info("Server initialized with UUID: " + rspUUID);
-                        } else {
-                            Logger.warn("Invalid response format from server: " + responseString);
+                    });
+
+                    if (responseString != null) {
+                        try {
+                            Gson gson = new Gson();
+                            JsonObject jsonResponse = gson.fromJson(responseString, JsonObject.class);
+                            if (jsonResponse.has("success") && jsonResponse.get("success").getAsBoolean()) {
+                                rspUUID = jsonResponse.get("uuid").getAsString();
+                                DataConfig.setRspUUID(rspUUID);
+                                Logger.info("Local server initialized successfully with UUID: " + rspUUID);
+                                done = true;
+                            } else {
+                                Logger.warn("Local server initialization response invalid: " + responseString);
+                                rspUUID = null;
+                            }
+                        } catch (Exception e) {
+                            Logger.warn("Failed to parse local server response: " + responseString);
+                            Logger.warn("Error: " + e.getMessage());
                             rspUUID = null;
                         }
                     }
-                } else {
-                    // Error - parse and log detailed error message
-                    handleErrorResponse(responseString, statusCode, "initialization");
-                    rspUUID = null;
                 }
             } catch (Exception e) {
-                Logger.warn("Failed to communicate with remote server!");
+                Logger.warn("Failed to initialize local server connection!");
+                Logger.warn("Error details: " + e.getMessage());
                 e.printStackTrace();
                 rspUUID = null;
             }
-        } catch (Exception e) {
-            rspUUID = null;
-            Logger.warn("Failed remote server initialization.");
-            e.printStackTrace();
-        }
-    }
+        } else {
+            // Remote server initialization
+            try (CloseableHttpClient httpClient = HttpClients.createDefault()) {
+                HttpPost httpPost = new HttpPost(finalURL + "initialize");
+                MultipartEntityBuilder builder = MultipartEntityBuilder.create();
+                builder.addTextBody("uuid", DataConfig.getRspUUID(), ContentType.TEXT_PLAIN.withCharset(StandardCharsets.UTF_8));
+                httpPost.setEntity(builder.build());
 
-    // Helper method to validate UUID format
+                String responseString = httpClient.execute(httpPost, response -> {
+                    try {
+                        return EntityUtils.toString(response.getEntity());
+                    } catch (IOException e) {
+                        Logger.warn("Error reading response: " + e.getMessage());
+                        return null;
+                    }
+                });
+
+                if (responseString != null) {
+                    try {
+                        Gson gson = new Gson();
+                        JsonObject jsonResponse = gson.fromJson(responseString, JsonObject.class);
+                        if (jsonResponse.has("success") && jsonResponse.get("success").getAsBoolean()) {
+                            rspUUID = jsonResponse.get("uuid").getAsString();
+                            DataConfig.setRspUUID(rspUUID);
+                            Logger.info("Remote server initialized successfully");
+                            done = true;
+                        } else {
+                            Logger.warn("Remote server returned error in response: " + responseString);
+                            rspUUID = null;
+                        }
+                    } catch (Exception e) {
+                        if (isValidUUID(responseString.trim())) {
+                            rspUUID = responseString.trim();
+                            DataConfig.setRspUUID(rspUUID);
+                            Logger.info("Remote server initialized with UUID: " + rspUUID);
+                            done = true;
+                        } else {
+                            Logger.warn("Invalid response format from remote server: " + responseString);
+                            rspUUID = null;
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                Logger.warn("Failed to initialize server connection!");
+                e.printStackTrace();
+                rspUUID = null;
+            }
+        }
+    }    // Helper method to validate UUID format
     private static boolean isValidUUID(String uuidString) {
         if (uuidString == null || uuidString.isEmpty()) {
             return false;
@@ -240,13 +280,15 @@ public class AutoHost {
             MultipartEntityBuilder builder = MultipartEntityBuilder.create();
             builder.addTextBody("uuid", rspUUID, ContentType.TEXT_PLAIN.withCharset(StandardCharsets.UTF_8));
             builder.addTextBody("sha1", Mix.getFinalSHA1(), ContentType.TEXT_PLAIN.withCharset(StandardCharsets.UTF_8));
-
-            HttpEntity entity = builder.build();
-            httpPost.setEntity(entity);
+            httpPost.setEntity(builder.build());
 
             try (CloseableHttpResponse response = httpClient.execute(httpPost)) {
-                String responseString = EntityUtils.toString(response.getEntity());
                 int statusCode = response.getCode();
+                String responseString = EntityUtils.toString(response.getEntity());
+
+                if (responseString == null) {
+                    return false;
+                }
 
                 if (statusCode >= 200 && statusCode < 300) {
                     try {
@@ -291,13 +333,9 @@ public class AutoHost {
                     handleErrorResponse(responseString, statusCode, "SHA1 check");
                     return false;
                 }
-            } catch (Exception e) {
-                Logger.warn("Failed to communicate with remote server during SHA1 check!");
-                e.printStackTrace();
-                return false;
             }
         } catch (Exception e) {
-            Logger.warn("Failed to create HTTP client for SHA1 check!");
+            Logger.warn("Failed to communicate with remote server during SHA1 check!");
             e.printStackTrace();
             return false;
         }
@@ -311,23 +349,30 @@ public class AutoHost {
             builder.addTextBody("uuid", rspUUID);
             httpPost.setEntity(builder.build());
 
-            try (CloseableHttpResponse response = httpClient.execute(httpPost)) {
-                String responseString = EntityUtils.toString(response.getEntity());
-                int statusCode = response.getCode();
+            httpClient.execute(httpPost, response -> {
+                try {
+                    String responseString = EntityUtils.toString(response.getEntity());
+                    int statusCode = response.getCode();
 
-                if (statusCode >= 200 && statusCode < 300) {
-                    // Success - optionally log the success message
-                    // Logger.info("Still alive ping successful");
-                } else {
-                    // Handle error - this might indicate session expired
-                    handleErrorResponse(responseString, statusCode, "still alive");
-                    // Reset UUID to trigger re-initialization
+                    if (statusCode >= 200 && statusCode < 300) {
+                        // Success - optionally log the success message
+                        // Logger.info("Still alive ping successful");
+                    } else {
+                        // Handle error - this might indicate session expired
+                        handleErrorResponse(responseString, statusCode, "still alive");
+                        // Reset UUID to trigger re-initialization
+                        rspUUID = null;
+                    }
+                } catch (IOException e) {
+                    Logger.warn("Error reading response: " + e.getMessage());
                     rspUUID = null;
                 }
-            } catch (Exception e) {
-                Logger.warn("Failed to communicate with remote server during still alive ping!");
-                e.printStackTrace();
-            }
+                return null;
+            });
+        } catch (Exception e) {
+            Logger.warn("Failed to communicate with server during still alive ping!");
+            e.printStackTrace();
+            rspUUID = null;
         }
     }
 
@@ -339,30 +384,36 @@ public class AutoHost {
             builder.addTextBody("uuid", rspUUID);
             httpPost.setEntity(builder.build());
 
-            try (CloseableHttpResponse response = httpClient.execute(httpPost)) {
-                HttpEntity responseEntity = response.getEntity();
+            httpClient.execute(httpPost, response -> {
+                try {
+                    HttpEntity responseEntity = response.getEntity();
 
-                if (responseEntity != null) {
-                    // Save the response as a zip file
-                    File zipFile = new File(ResourcePackManager.plugin.getDataFolder().getAbsolutePath() + File.separatorChar + "data_compliance" + File.separatorChar + "data.zip");
-                    if (!zipFile.getParentFile().exists()) zipFile.mkdirs();
-                    if (zipFile.exists()) zipFile.delete();
-                    zipFile.createNewFile();
-                    try (FileOutputStream outStream = new FileOutputStream(zipFile)) {
-                        responseEntity.writeTo(outStream);
+                    if (responseEntity != null) {
+                        // Save the response as a zip file
+                        File zipFile = new File(ResourcePackManager.plugin.getDataFolder().getAbsolutePath() + File.separatorChar + "data_compliance" + File.separatorChar + "data.zip");
+                        if (!zipFile.getParentFile().exists()) zipFile.mkdirs();
+                        if (zipFile.exists()) zipFile.delete();
+                        zipFile.createNewFile();
+                        try (FileOutputStream outStream = new FileOutputStream(zipFile)) {
+                            responseEntity.writeTo(outStream);
+                        }
+                        InputStream inputStream = ResourcePackManager.plugin.getResource("ReadMe.md");
+
+                        File readMe = new File(ResourcePackManager.plugin.getDataFolder().getAbsolutePath() + File.separatorChar + "data_compliance" + File.separatorChar + "ReadMe.md");
+                        if (!readMe.exists()) readMe.createNewFile();
+
+                        // Copy the InputStream to the file
+                        Files.copy(inputStream, readMe.toPath(), StandardCopyOption.REPLACE_EXISTING);
                     }
-                    InputStream inputStream = ResourcePackManager.plugin.getResource("ReadMe.md");
-
-                    File readMe = new File(ResourcePackManager.plugin.getDataFolder().getAbsolutePath() + File.separatorChar + "data_compliance" + File.separatorChar + "ReadMe.md");
-                    if (!readMe.exists()) readMe.createNewFile();
-
-                    // Copy the InputStream to the file
-                    Files.copy(inputStream, readMe.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                } catch (Exception e) {
+                    Logger.warn("Failed to process data compliance response!");
+                    e.printStackTrace();
                 }
-            } catch (Exception e) {
-                Logger.warn("Failed to communicate with remote server!");
-                e.printStackTrace();
-            }
+                return null;
+            });
+        } catch (Exception e) {
+            Logger.warn("Failed to communicate with server during data compliance request!");
+            e.printStackTrace();
         }
     }
 
