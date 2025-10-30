@@ -31,11 +31,10 @@ import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 
 public class AutoHost {
-    private static final String finalURL = "https://magmaguy.com/rsp/";
+    private static final String finalURL = "http://localhost:50000/";
     @Setter
     private static boolean done = false;
-//    private static final String finalURL = "https://localhost:50000/";
-
+    private static LocalResourcePackServer localServer;
     private static BukkitTask keepAlive = null;
     @Getter
     private static String rspUUID = null;
@@ -60,6 +59,13 @@ public class AutoHost {
         done = false;
         rspUUID = null;
         if (keepAlive != null) keepAlive.cancel();
+        
+        // Initialize the local server configuration
+        LocalServerConfig.initialize(ResourcePackManager.plugin);
+        
+        // Start the local server
+        localServer = new LocalResourcePackServer();
+        localServer.start();
 
         keepAlive = new BukkitRunnable() {
             int counter = 0;
@@ -179,39 +185,27 @@ public class AutoHost {
     }
 
     public static void uploadFile() {
-        Logger.info("Uploading resource!");
+        Logger.info("Storing resource pack locally!");
 
-        try (CloseableHttpClient httpClient = HttpClients.createDefault()) {
-            HttpPost uploadFile = new HttpPost(finalURL + "upload");
-
-            MultipartEntityBuilder builder = MultipartEntityBuilder.create();
-            builder.addTextBody("uuid", rspUUID, ContentType.TEXT_PLAIN.withCharset(StandardCharsets.UTF_8));
-            builder.addBinaryBody("file", Mix.getFinalResourcePack(), ContentType.APPLICATION_OCTET_STREAM, Mix.getFinalResourcePack().getName());
-
-            uploadFile.setEntity(builder.build());
-
-            try (CloseableHttpResponse response = httpClient.execute(uploadFile)) {
-                String responseString = EntityUtils.toString(response.getEntity());
-                int statusCode = response.getCode();
-
-                if (statusCode >= 200 && statusCode < 300) {
-                    Logger.info("Uploaded resource pack for automatic hosting! url: " + finalURL + rspUUID);
-                    done = true;
-                    if (firstUpload) {
-                        //Recover from a reload by sending the pack to online players
-                        for (Player player : Bukkit.getOnlinePlayers())
-                            AutoHost.sendResourcePack(player);
-                    }
-                    firstUpload = false;
-                } else {
-                    // Handle detailed error messages from server
-                    handleErrorResponse(responseString, statusCode, "upload");
+        try {
+            // Store the resource pack using the local server
+            rspUUID = LocalResourcePackServer.getInstance().storeResourcePack(Mix.getFinalResourcePack());
+            
+            if (rspUUID != null) {
+                Logger.info("Stored resource pack for local hosting! url: " + finalURL + rspUUID);
+                done = true;
+                if (firstUpload) {
+                    //Recover from a reload by sending the pack to online players
+                    for (Player player : Bukkit.getOnlinePlayers())
+                        AutoHost.sendResourcePack(player);
                 }
-            } catch (Exception e) {
-                Logger.warn("Failed to communicate with remote server during upload!");
-                e.printStackTrace();
+                firstUpload = false;
+            } else {
+                Logger.warn("Failed to store resource pack locally!");
             }
-        } catch (IOException e) {
+        } catch (Exception e) {
+            Logger.warn("Failed to store resource pack!");
+            e.printStackTrace();
             throw new RuntimeException(e);
         }
     }
@@ -351,6 +345,9 @@ public class AutoHost {
 
     public static void shutdown() {
         if (keepAlive != null) keepAlive.cancel();
+        if (localServer != null) {
+            localServer.stop();
+        }
         done = false;
         rspUUID = null;
     }
