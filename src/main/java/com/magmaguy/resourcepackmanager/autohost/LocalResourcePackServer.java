@@ -46,11 +46,12 @@ public class LocalResourcePackServer {
             // Create packs directory if it doesn't exist
             Files.createDirectories(LocalServerConfig.getResourcePacksPath());
 
-            // Create and start the HTTP server
-            server = HttpServer.create(new InetSocketAddress(LocalServerConfig.getHost(), LocalServerConfig.getPort()), 0);
+            // Create and start the HTTP server with a larger backlog
+            server = HttpServer.create(new InetSocketAddress(LocalServerConfig.getHost(), LocalServerConfig.getPort()), 50);
             server.createContext("/", new ResourcePackHandler());
-            server.setExecutor(Executors.newFixedThreadPool(10));
-            server.start();
+            // Create a thread pool with more threads for concurrent downloads
+            server.setExecutor(Executors.newFixedThreadPool(20));
+            start();
             running = true;
 
             Bukkit.getLogger().info("Local resource pack server started on http://" + 
@@ -222,19 +223,42 @@ public class LocalResourcePackServer {
                         File packFile = new File(filePath);
                         
                         if (packFile.exists()) {
-                            Bukkit.getLogger().info("Serving resource pack: " + packId);
-                            // Serve the file
-                            exchange.getResponseHeaders().set("Content-Type", "application/zip");
-                            exchange.sendResponseHeaders(200, packFile.length());
+                            Bukkit.getLogger().info("Serving resource pack: " + packId + " (size: " + packFile.length() / 1024 / 1024 + "MB)");
                             
-                            try (FileInputStream fis = new FileInputStream(packFile);
-                                 OutputStream os = exchange.getResponseBody()) {
-                                byte[] buffer = new byte[8192];
-                                int count;
-                                while ((count = fis.read(buffer)) != -1) {
-                                    os.write(buffer, 0, count);
+                            // Get the range header if present
+                            String rangeHeader = exchange.getRequestHeaders().getFirst("Range");
+                            long fileSize = packFile.length();
+                            
+                            // Set response headers for better download handling
+                            exchange.getResponseHeaders().set("Content-Type", "application/zip");
+                            exchange.getResponseHeaders().set("Accept-Ranges", "bytes");
+                            exchange.getResponseHeaders().set("Cache-Control", "public, max-age=86400");
+                            exchange.getResponseHeaders().set("Connection", "keep-alive");
+                            
+                            // Handle range requests (resumable downloads)
+                            if (rangeHeader != null && rangeHeader.startsWith("bytes=")) {
+                                String[] ranges = rangeHeader.substring(6).split("-");
+                                long start = Long.parseLong(ranges[0]);
+                                long end = ranges.length > 1 ? Long.parseLong(ranges[1]) : fileSize - 1;
+                                long contentLength = end - start + 1;
+                                
+                                exchange.getResponseHeaders().set("Content-Range", String.format("bytes %d-%d/%d", start, end, fileSize));
+                                exchange.sendResponseHeaders(206, contentLength);
+                                
+                                try (FileInputStream fis = new FileInputStream(packFile)) {
+                                    fis.skip(start);
+                                    sendFileChunked(fis, exchange.getResponseBody(), contentLength);
+                                }
+                            } else {
+                                // Send full file with chunked transfer
+                                exchange.getResponseHeaders().set("Content-Length", String.valueOf(fileSize));
+                                exchange.sendResponseHeaders(200, fileSize);
+                                
+                                try (FileInputStream fis = new FileInputStream(packFile)) {
+                                    sendFileChunked(fis, exchange.getResponseBody(), fileSize);
                                 }
                             }
+                            
                             Bukkit.getLogger().info("Successfully served resource pack: " + packId);
                         } else {
                             Bukkit.getLogger().warning("Pack file not found at path: " + filePath);
@@ -278,6 +302,19 @@ public class LocalResourcePackServer {
             JsonObject error = new JsonObject();
             error.addProperty("error", message);
             sendJsonResponse(exchange, code, error.toString());
+        }
+        
+        private void sendFileChunked(FileInputStream fis, OutputStream os, long length) throws IOException {
+            // Use a larger buffer for better performance with large files
+            byte[] buffer = new byte[64 * 1024]; // 64KB chunks
+            long remaining = length;
+            int read;
+            
+            while (remaining > 0 && (read = fis.read(buffer, 0, (int) Math.min(buffer.length, remaining))) != -1) {
+                os.write(buffer, 0, read);
+                os.flush(); // Ensure chunks are sent immediately
+                remaining -= read;
+            }
         }
     }
 }
